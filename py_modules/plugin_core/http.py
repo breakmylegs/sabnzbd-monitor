@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.cookiejar
 import ipaddress
 import json
+import os
 import ssl
 import urllib.error
 import urllib.parse
@@ -104,6 +105,33 @@ def port_warning(base: BaseUrl) -> str | None:
     return None
 
 
+# Decky's bundled Python looks for CA certificates where its build machine kept
+# them, which SteamOS does not have, so every HTTPS call fails verification.
+# Decky's own downloads use certifi for this reason. Use the system bundle when
+# the default paths are missing, then certifi, which Decky ships.
+SYSTEM_CA_FILES = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/ca-certificates/extracted/tls-ca-bundle.pem",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+)
+
+
+def default_ca_file(candidates: tuple[str, ...] = SYSTEM_CA_FILES) -> str | None:
+    """The CA file to load when the default paths have none, or None to use the defaults."""
+    paths = ssl.get_default_verify_paths()
+    if (paths.cafile and os.path.isfile(paths.cafile)) or (paths.capath and os.path.isdir(paths.capath)):
+        return None
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    try:
+        import certifi
+    except ImportError:
+        return None
+    return certifi.where()
+
+
 @dataclass
 class TlsOptions:
     verify: bool = True
@@ -117,7 +145,7 @@ class TlsOptions:
             return ctx
         if self.ca_file:
             return ssl.create_default_context(cafile=self.ca_file)
-        return ssl.create_default_context()
+        return ssl.create_default_context(cafile=default_ca_file())
 
 
 @dataclass
@@ -169,6 +197,7 @@ class HttpClient:
         form: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        json_body: Any = None,
     ) -> Response:
         """Send one request. Returns any HTTP status as a Response. Raises PluginError
         only when no HTTP reply arrived."""
@@ -180,6 +209,9 @@ class HttpClient:
         if form is not None:
             data = urllib.parse.urlencode(_clean(form)).encode("ascii")
             merged["Content-Type"] = "application/x-www-form-urlencoded"
+        elif json_body is not None:
+            data = json.dumps(json_body).encode("utf-8")
+            merged["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, method=method.upper(), headers=merged)
         try:
             with self._opener.open(req, timeout=timeout or self.timeout) as res:

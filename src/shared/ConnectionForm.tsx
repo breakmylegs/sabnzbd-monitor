@@ -254,6 +254,7 @@ export function ConnectionForm<S extends CommonSettings, D>(props: Props<S, D>) 
       <PanelSectionRow>
         <ToggleField
           label="Remove settings on uninstall"
+          description="Updating by installing from the URL again counts as an uninstall. Leave this off to keep your keys."
           checked={settings.remove_data_on_uninstall}
           onChange={(v) => save({ remove_data_on_uninstall: v } as Partial<S>)}
         />
