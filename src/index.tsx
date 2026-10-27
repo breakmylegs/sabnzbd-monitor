@@ -36,6 +36,10 @@ import {
 } from "./rows";
 import type { HistoryJob, QueueJob, SabData, SabSettings, Toast, Warning } from "./types";
 
+// plugin.json "name", exactly. Decky lists the plugin by it and matches the
+// installed copy by it when Update now replaces the plugin.
+const PLUGIN_NAME = "SABnzbd Monitor";
+
 type Snap = Snapshot<SabSettings, SabData>;
 
 const backend = monitorBackend<SabSettings, SabData>();
@@ -278,7 +282,7 @@ function Content() {
           summary={data && online ? <span style={note}>{serverSummary(data.server)}</span> : undefined}
         />
         <OfflineBanner status={status} />
-        <UpdateBadge update={update} />
+        <UpdateBadge update={update} name={PLUGIN_NAME} />
         {online && data && <Controls data={data} />}
       </PanelSection>
 
@@ -352,7 +356,7 @@ export default definePlugin(() => {
   });
 
   return {
-    name: "SABnzbd Monitor",
+    name: PLUGIN_NAME,
     titleView: <div className={staticClasses.Title}>SABnzbd Monitor</div>,
     content: <Content />,
     icon: <FaDownload />,

@@ -24,6 +24,12 @@ https://github.com/breakmylegs/sabnzbd-monitor/releases/latest/download/sabnzbd-
 
 Needs Decky Loader 3.0.4 or later. If you installed 0.1.0 or earlier, uninstall it first, then install this one. Your settings are kept.
 
+## Updating
+
+When a new release is out, the plugin shows Update available. Press Update now, then confirm in Decky's prompt. Your settings and keys are kept.
+
+If Update now is not offered, or Decky does not accept it, the plugin shows the install link with a Copy link button. Use it with Install Plugin from URL. Leave "Remove settings on uninstall" off, because an update counts as an uninstall.
+
 ## Set up
 
 1. Open the plugin in the Quick Access Menu, then Show settings.

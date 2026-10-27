@@ -14,7 +14,9 @@ def test_manifest_matches_folder_and_has_no_root_flag():
     # panel uses. The id stays in package.json, the zip and the folder.
     with open(os.path.join(PLUGIN, "src", "index.tsx"), encoding="utf-8") as handle:
         source = handle.read()
-    assert manifest["name"] == re.search(r'\n    name: "([^"]+)",', source).group(1)
+    assert manifest["name"] == re.search(r'\nconst PLUGIN_NAME = "([^"]+)";', source).group(1)
+    assert "\n    name: PLUGIN_NAME," in source
+    assert "name={PLUGIN_NAME}" in source
     assert manifest["name"] != package["name"]
     assert manifest["api_version"] == 1
     assert "root" not in manifest["flags"] and "_root" not in manifest["flags"]
