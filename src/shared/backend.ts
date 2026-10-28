@@ -27,6 +27,9 @@ export interface UpdateInfo {
   latest: string | null;
   available: boolean;
   install_url: string | null;
+  // Seconds since the epoch of the last GitHub check, and whether it failed.
+  checked_at?: number | null;
+  check_failed?: boolean;
 }
 
 export interface Snapshot<S, D> {

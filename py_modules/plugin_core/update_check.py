@@ -70,23 +70,36 @@ class UpdateChecker:
         cache = self.cached()
         latest = cache.get("latest") if isinstance(cache.get("latest"), str) else None
         if force or self.due():
+            failed = False
             try:
                 data = self._fetch_json(f"https://api.github.com/repos/{self.repo}/releases/latest")
                 tag = data.get("tag_name") if isinstance(data, dict) else None
                 if isinstance(tag, str):
                     latest = tag
+                else:
+                    failed = True
             except Exception:  # noqa: BLE001, an update check must never break the plugin
-                pass
-            atomic_write_json(self.cache_path, {"checked_at": self._now(), "latest": latest})
+                failed = True
+            atomic_write_json(self.cache_path, {"checked_at": self._now(), "latest": latest, "failed": failed})
         return self.result(latest)
+
+    def known(self) -> dict[str, Any]:
+        """What the last check found, without a network call. The panel always
+        needs the version and install link, even with daily checks off."""
+        cache = self.cached()
+        return self.result(cache.get("latest") if isinstance(cache.get("latest"), str) else None)
 
     def result(self, latest: str | None) -> dict[str, Any]:
         current = parse_version(self.current)
         newest = parse_version(latest or "")
         available = bool(current and newest and newest > current)
+        cache = self.cached() if self.configured else {}
+        checked = cache.get("checked_at")
         return {
             "current": self.current,
             "latest": ".".join(map(str, newest)) if newest else None,
             "available": available,
             "install_url": install_url(self.repo, self.asset) if self.configured else None,
+            "checked_at": checked if isinstance(checked, (int, float)) else None,
+            "check_failed": cache.get("failed") is True,
         }

@@ -26,9 +26,14 @@ Needs Decky Loader 3.0.4 or later. If you installed 0.1.0 or earlier, uninstall 
 
 ## Updating
 
-When a new release is out, the plugin shows Update available. Press Update now, then confirm in Decky's prompt. Your settings and keys are kept.
+Open the plugin and scroll to Updates. It shows your version and what the last check found.
 
-If Update now is not offered, or Decky does not accept it, the plugin shows the install link with a Copy link button. Use it with Install Plugin from URL. Leave "Remove settings on uninstall" off, because an update counts as an uninstall.
+- **Check for updates** asks GitHub for the latest release now.
+- **Update now** appears when a newer version is out. Confirm in Decky's prompt. Your settings and keys are kept.
+- **Reinstall latest** appears otherwise, and installs the latest release again the same way.
+- **Copy install link** copies the link for Decky Settings, Developer, Install Plugin from URL. The link is shown under it, in case copying is not available in Game Mode.
+
+Leave "Remove settings on uninstall" off, because an update counts as an uninstall.
 
 ## Set up
 
