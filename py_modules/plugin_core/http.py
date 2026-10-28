@@ -23,6 +23,19 @@ DEFAULT_TIMEOUT = 5.0
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 DECKY_RESERVED_PORT = 8080
 
+# Sent on every request. Cloudflare in front of Deck Verified answers 403 to
+# Python's default "Python-urllib/3.x", so each plugin names itself instead.
+# Services call set_user_agent at startup with build_info.json.
+USER_AGENT = "decky-plugin"
+
+
+def set_user_agent(build_info: Mapping[str, str], version: str) -> str:
+    global USER_AGENT
+    name = build_info.get("plugin") or "decky-plugin"
+    where = build_info.get("monorepo")
+    USER_AGENT = f"{name}/{version}" + (f" (+https://github.com/{where})" if where else "")
+    return USER_AGENT
+
 
 @dataclass(frozen=True)
 class BaseUrl:
@@ -223,7 +236,7 @@ class HttpClient:
         if params:
             url = f"{url}?{urllib.parse.urlencode(_clean(params))}"
         data = None
-        merged = {"Accept": "application/json", **self.headers, **(headers or {})}
+        merged = {"Accept": "application/json", "User-Agent": USER_AGENT, **self.headers, **(headers or {})}
         if form is not None:
             data = urllib.parse.urlencode(_clean(form)).encode("ascii")
             merged["Content-Type"] = "application/x-www-form-urlencoded"

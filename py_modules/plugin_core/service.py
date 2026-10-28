@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from . import poller as poll
 from .errors import PluginError, classify
-from .http import fetch_json
+from .http import fetch_json, set_user_agent
 from .secrets import SecretStore, apply_import, import_path, read_import_file
 from .settings import JsonStore
 from .update_check import UpdateChecker, load_build_info
@@ -62,8 +62,10 @@ class MonitorService:
         self.settings = JsonStore(os.path.join(settings_dir, "settings.json"), {**COMMON_DEFAULTS, **self.extra_defaults})
         self.secrets = SecretStore(os.path.join(settings_dir, "secrets.json"), self.secret_names)
         self.poller = poll.Poller(self._fetch, self._on_data, self._on_status, self.is_configured)
+        build_info = load_build_info(plugin_dir)
+        set_user_agent(build_info, version)
         self.updates = UpdateChecker(
-            load_build_info(plugin_dir),
+            build_info,
             version,
             os.path.join(runtime_dir, "update.json"),
             fetch_json,

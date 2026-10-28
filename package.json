@@ -1,6 +1,6 @@
 {
   "name": "sabnzbd-monitor",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Monitor and control a SABnzbd instance from the Decky Quick Access Menu",
   "type": "module",
   "private": true,
