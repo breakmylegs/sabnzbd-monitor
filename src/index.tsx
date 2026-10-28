@@ -22,6 +22,7 @@ import { watchGameRunning } from "./shared/gameState";
 import { OfflineBanner } from "./shared/OfflineBanner";
 import { StatusHeader } from "./shared/StatusHeader";
 import { shouldToast } from "./shared/toastOnce";
+import { PanelBoundary } from "./shared/PanelBoundary";
 import { UpdateBadge } from "./shared/UpdateBadge";
 import { useBackendEvent } from "./shared/useBackendEvent";
 import {
@@ -358,7 +359,11 @@ export default definePlugin(() => {
   return {
     name: PLUGIN_NAME,
     titleView: <div className={staticClasses.Title}>SABnzbd Monitor</div>,
-    content: <Content />,
+    content: (
+      <PanelBoundary>
+        <Content />
+      </PanelBoundary>
+    ),
     icon: <FaDownload />,
     onDismount() {
       removeEventListener("notify", onNotify);

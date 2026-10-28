@@ -59,7 +59,22 @@ class PluginError(Exception):
         return self.hint or MESSAGES[self.kind]
 
     def to_dict(self) -> dict:
-        return {"kind": self.kind, "message": self.message, "status": self.status}
+        out = {"kind": self.kind, "message": self.message, "status": self.status}
+        if self.kind == TLS and self.detail:
+            # OpenSSL's reason and the CA source, so a report can say what failed.
+            out["detail"] = self.detail
+        return out
+
+
+def tls_reason(reason: object) -> str:
+    """OpenSSL's reason, such as "CERTIFICATE_VERIFY_FAILED: unable to get local
+    issuer certificate". It names no secret."""
+    code = getattr(reason, "reason", None)
+    if not code:
+        # No OpenSSL code, such as a certificate file that would not load.
+        return (str(reason) or type(reason).__name__)[:160]
+    message = getattr(reason, "verify_message", None)
+    return (f"{code}: {message}" if message else str(code))[:160]
 
 
 def _reason_errno(reason: object) -> int | None:
@@ -76,7 +91,7 @@ def classify(exc: BaseException) -> PluginError:
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
     if isinstance(reason, (ssl.SSLError, ssl.CertificateError)):
-        return PluginError(TLS, type(reason).__name__)
+        return PluginError(TLS, tls_reason(reason))
     if isinstance(reason, socket.gaierror):
         return PluginError(DNS, "name resolution failed")
     if isinstance(reason, (socket.timeout, TimeoutError)):

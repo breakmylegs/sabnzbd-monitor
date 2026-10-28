@@ -11,6 +11,8 @@ export interface SecretView {
 export interface BackendError {
   kind: string;
   message: string;
+  // TLS failures only: OpenSSL's reason and where certificates came from.
+  detail?: string;
   status?: number | null;
 }
 

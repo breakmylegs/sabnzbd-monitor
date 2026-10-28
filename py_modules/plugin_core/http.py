@@ -17,7 +17,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .errors import BAD_RESPONSE, PluginError, classify, from_status
+from .errors import BAD_RESPONSE, TLS, PluginError, classify, from_status
 
 DEFAULT_TIMEOUT = 5.0
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -147,6 +147,18 @@ class TlsOptions:
             return ssl.create_default_context(cafile=self.ca_file)
         return ssl.create_default_context(cafile=default_ca_file())
 
+    def describe(self) -> str:
+        """Where certificates come from, for TLS error details."""
+        if not self.verify:
+            return "verification off"
+        if self.ca_file:
+            return f"CA file {self.ca_file}"
+        chosen = default_ca_file()
+        if chosen:
+            return f"CA file {chosen}"
+        paths = ssl.get_default_verify_paths()
+        return f"OpenSSL defaults {paths.cafile or '-'} and {paths.capath or '-'}"
+
 
 @dataclass
 class Response:
@@ -180,8 +192,14 @@ class HttpClient:
             # LAN servers must not go through a proxy picked up from the environment.
             urllib.request.ProxyHandler({}),
         ]
+        # Loading certificates can fail too. Keep that error for the first request,
+        # where it is classified like any other.
+        self._tls_error: BaseException | None = None
         if self.base.scheme == "https":
-            handlers.append(urllib.request.HTTPSHandler(context=self.tls.context()))
+            try:
+                handlers.append(urllib.request.HTTPSHandler(context=self.tls.context()))
+            except (ssl.SSLError, OSError) as exc:
+                self._tls_error = exc
         if self.use_cookies:
             handlers.append(urllib.request.HTTPCookieProcessor(self.cookies))
         self._opener = urllib.request.build_opener(*handlers)
@@ -214,6 +232,8 @@ class HttpClient:
             merged["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, method=method.upper(), headers=merged)
         try:
+            if self._tls_error is not None:
+                raise urllib.error.URLError(ssl.SSLError(f"could not load certificates: {self._tls_error}"))
             with self._opener.open(req, timeout=timeout or self.timeout) as res:
                 return Response(res.status, dict(res.headers.items()), res.read())
         except urllib.error.HTTPError as err:
@@ -223,7 +243,10 @@ class HttpClient:
                 body = b""
             return Response(err.code, dict(err.headers.items()) if err.headers else {}, body)
         except Exception as exc:  # noqa: BLE001, classified below
-            raise classify(exc) from None
+            err = classify(exc)
+            if err.kind == TLS:
+                err.detail = f"{err.detail}. {self.tls.describe()}"
+            raise err from None
 
     def get(self, path: str, **kwargs: Any) -> Response:
         return self.request("GET", path, **kwargs)
