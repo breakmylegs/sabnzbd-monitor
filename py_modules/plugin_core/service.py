@@ -9,11 +9,13 @@ without a running loader.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from typing import Any, Awaitable, Callable, Mapping
 
 from . import poller as poll
 from .errors import PluginError, classify
+from .game_mode import GameModeMemory
 from .http import fetch_json, set_user_agent
 from .secrets import SecretStore, apply_import, import_path, read_import_file
 from .settings import JsonStore
@@ -74,6 +76,14 @@ class MonitorService:
         self.first_poll = True
         self._update_task: asyncio.Task | None = None
         self.update_info: dict[str, Any] | None = None
+        self.game_memory = GameModeMemory(runtime_dir)
+        self._game_lock = asyncio.Lock()
+        self._game_task: asyncio.Task | None = None
+        self._panel_visible = False
+        self._route_visible = False
+        # False until the frontend first says whether a game runs. Until then a
+        # leftover game-time record is not undone, because a game may be running.
+        self.game_state_known = False
 
     # Hooks for subclasses
 
@@ -98,6 +108,10 @@ class MonitorService:
     async def test_connection(self) -> dict[str, Any]:
         raise NotImplementedError
 
+    def game_changed_blocking(self, running: bool) -> None:
+        """Called in a worker thread when a game starts or stops. Subclasses
+        apply or undo their opt-in game-time change here. Errors are logged."""
+
     connection_keys = frozenset({"base_url", "tls_verify", "ca_file"})
 
     # Lifecycle
@@ -108,6 +122,12 @@ class MonitorService:
         self._update_task = asyncio.get_event_loop().create_task(self._update_loop())
 
     async def stop(self) -> None:
+        if self._game_task and not self._game_task.done():
+            # Let a pending game-time change or undo finish, briefly.
+            try:
+                await asyncio.wait_for(asyncio.shield(self._game_task), timeout=6)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
         await self.poller.stop()
         if self._update_task:
             self._update_task.cancel()
@@ -178,10 +198,60 @@ class MonitorService:
         }
 
     def set_visible(self, visible: bool) -> None:
-        self.poller.set_visible(bool(visible))
+        self._panel_visible = bool(visible)
+        self.poller.set_visible(self._panel_visible or self._route_visible)
+
+    def set_route_visible(self, visible: bool) -> None:
+        """A full-screen page is open. The Quick Access Menu reports hidden
+        then, so the page keeps the fast poll on by itself."""
+        self._route_visible = bool(visible)
+        self.poller.set_visible(self._panel_visible or self._route_visible)
+
+    def _server_tag(self) -> str:
+        return hashlib.sha256(str(self.settings.get("base_url")).encode("utf-8")).hexdigest()[:16]
+
+    def remember_game_change(self, record: dict[str, Any]) -> None:
+        self.game_memory.set({**record, "server": self._server_tag()})
+
+    def game_change(self) -> dict[str, Any] | None:
+        """The recorded game-time change, if it was made on the server in use now."""
+        record = self.game_memory.get()
+        if record and record.get("server") != self._server_tag():
+            # Made on another server. Undoing it here would change the wrong one.
+            self.game_memory.clear()
+            return None
+        return record
+
+    def game_ended_undo_due(self) -> bool:
+        """A leftover game-time change should be undone now: the frontend has
+        reported, no game runs, and a record is on disk."""
+        return self.game_state_known and not self.poller.game_running and self.game_memory.get() is not None
 
     def set_game_running(self, running: bool) -> None:
-        self.poller.set_game_running(bool(running))
+        running = bool(running)
+        # The first report counts as a change, so a record left by a restart
+        # mid-game is undone as soon as the panel says no game is running.
+        changed = running != self.poller.game_running or not self.game_state_known
+        self.game_state_known = True
+        self.poller.set_game_running(running)
+        if not changed or not self.is_configured():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop, as in synchronous tests. Decky always calls this from one.
+            return
+        self._game_task = loop.create_task(self._game_changed(running))
+
+    async def _game_changed(self, running: bool) -> None:
+        # One change at a time, so a quick start and stop apply in order.
+        async with self._game_lock:
+            try:
+                await asyncio.to_thread(self.game_changed_blocking, running)
+            except Exception as exc:  # noqa: BLE001, classified
+                self.log.warning("game-time change failed: %s", classify(exc).kind)
+            else:
+                self.poller.wake()
 
     def _connection_reset(self) -> None:
         self.on_connection_changed()

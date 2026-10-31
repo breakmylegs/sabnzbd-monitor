@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { historyDetail, jobTitle, queueDetail, serverSummary, speedLimitOption } from "./rows";
+import {
+  categoryLabel,
+  diskSummary,
+  formatGb,
+  historyDetail,
+  jobTitle,
+  queueDetail,
+  serverSummary,
+  speedLimitOption,
+  stageLines,
+  statsLine,
+} from "./rows";
 import type { HistoryJob, QueueJob, SabData } from "./types";
 
 const job: QueueJob = {
@@ -14,6 +25,7 @@ const job: QueueJob = {
   priority_label: "Normal",
   category: "",
   paused: false,
+  index: 0,
 };
 
 const server: SabData["server"] = {
@@ -27,6 +39,9 @@ const server: SabData["server"] = {
   speedlimit: 100,
   warnings: 0,
   pause_left: null,
+  disk_incomplete: 120.5,
+  disk_complete: 1450.25,
+  quota_left: null,
 };
 
 const done: HistoryJob = {
@@ -38,6 +53,8 @@ const done: HistoryJob = {
   size: "2.0 GB",
   completed: 1,
   action_line: "",
+  category: "",
+  stage_log: [],
 };
 
 describe("queue rows", () => {
@@ -88,5 +105,33 @@ describe("server summary", () => {
     expect(speedLimitOption(60)).toBe(50);
     expect(speedLimitOption(100)).toBe(100);
     expect(speedLimitOption(0)).toBe(25);
+  });
+});
+
+describe("disk and quota", () => {
+  it("shows free space for both folders, then quota", () => {
+    expect(diskSummary(server)).toBe("120 GB free for downloads, 1.45 TB for completed");
+    expect(diskSummary({ ...server, disk_complete: 120.5 })).toBe("120 GB free for downloads");
+    expect(diskSummary({ ...server, quota_left: "50 G " })).toBe(
+      "120 GB free for downloads, 1.45 TB for completed, quota left 50 G",
+    );
+    expect(diskSummary({ ...server, disk_incomplete: null, disk_complete: null })).toBeNull();
+    expect(formatGb(999.6)).toBe("999 GB");
+    expect(formatGb(1459.9)).toBe("1.45 TB");
+  });
+});
+
+describe("history details", () => {
+  it("lists each stage line and names the default category", () => {
+    const failed = { ...done, status: "Failed", stage_log: [{ name: "Repair", actions: ["Repair failed"] }] };
+    expect(stageLines(failed)).toEqual(["Repair: Repair failed"]);
+    expect(categoryLabel("*")).toBe("Default");
+    expect(categoryLabel("movies")).toBe("movies");
+  });
+
+  it("formats download totals", () => {
+    expect(statsLine("All servers", { day: 2e9, week: 9e9, month: 4e10, total: 9e11 })).toBe(
+      "All servers: today 2.00 GB, this week 9.00 GB, this month 40.0 GB, total 900 GB",
+    );
   });
 });

@@ -73,6 +73,15 @@ def num(raw: Any, default: float = 0.0) -> float:
         return default
 
 
+def truthy(raw: Any) -> bool:
+    """Booleans sometimes arrive as text or numbers, for example "True" or 1."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return raw != 0
+    return str(raw or "").strip().lower() in ("true", "1", "yes")
+
+
 TIME_RE = re.compile(r"^(?:(\d+):)?(\d+):(\d{1,2}):(\d{1,2})$")
 
 

@@ -20,7 +20,7 @@ from typing import Any, Iterable
 from plugin_core.errors import AUTH, BAD_RESPONSE, FORBIDDEN, HTTP_ERROR, PluginError, from_status
 from plugin_core.http import BaseUrl, HttpClient, TlsOptions
 
-from .states import PRIORITY_NAMES
+from .states import PRIORITY_NAMES, num
 
 CONFIG_LOCKED = "Configuration locked"
 
@@ -152,3 +152,60 @@ class SabClient:
         if not 1 <= percent <= 100:
             raise ValueError("speed limit must be 1 to 100 percent")
         self._get("config", name="speedlimit", value=int(percent))
+
+    def move_job(self, nzo_id: str, position: int) -> None:
+        """0 is the top. SABnzbd may give the job the priority of the job it passes."""
+        if isinstance(position, bool) or not isinstance(position, int) or position < 0:
+            raise ValueError("position must be 0 or more")
+        data = self._get("switch", value=_join_ids(nzo_id), value2=position)
+        result = data.get("result") if isinstance(data, dict) else None
+        if isinstance(result, dict) and num(result.get("position"), 0) < 0:
+            # -1 means SABnzbd did not move it, for example a job that just finished.
+            raise PluginError(HTTP_ERROR, "not moved", 200, hint="SABnzbd did not move the job. Refresh and try again.")
+
+    def categories(self) -> list[str]:
+        """Category names. "*" is the default category."""
+        data = self._get("get_cats")
+        cats = data.get("categories") if isinstance(data, dict) else None
+        return [c for c in cats if isinstance(c, str) and c] if isinstance(cats, list) else []
+
+    def change_category(self, nzo_id: str, category: str) -> None:
+        if not isinstance(category, str) or not category:
+            raise ValueError("pick a category")
+        self._get("change_cat", value=_join_ids(nzo_id), value2=category)
+
+    def clear_warnings(self) -> None:
+        self._get("warnings", name="clear")
+
+    # History
+
+    def history_page(self, limit: int, failed_only: bool = False) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": int(limit)}
+        if failed_only:
+            params["failed_only"] = 1
+        data = self._get("history", **params)
+        history = data.get("history") if isinstance(data, dict) else None
+        if not isinstance(history, dict):
+            raise PluginError(BAD_RESPONSE, "history shape")
+        return history
+
+    def retry(self, nzo_id: str) -> None:
+        self._get("retry", value=_join_ids(nzo_id))
+
+    def retry_all(self) -> None:
+        self._get("retry_all")
+
+    def delete_history(self, nzo_ids: Iterable[str] | str, delete_files: bool = False) -> None:
+        """Archived by default, as in SABnzbd's own interface. `nzo_ids` may be "failed"."""
+        value = "failed" if nzo_ids == "failed" else _join_ids(nzo_ids)
+        params: dict[str, Any] = {"name": "delete", "value": value}
+        if delete_files:
+            params["del_files"] = 1
+        self._get("history", **params)
+
+    def server_stats(self) -> dict[str, Any]:
+        """Bytes downloaded per day, week, month and in total, overall and per server."""
+        data = self._get("server_stats")
+        if not isinstance(data, dict):
+            raise PluginError(BAD_RESPONSE, "server stats shape")
+        return data

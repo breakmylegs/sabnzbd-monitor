@@ -82,6 +82,7 @@ export function monitorBackend<S, D>() {
     deleteImportFile: callable<[], ActionResult>("delete_import_file"),
     testConnection: callable<[], TestReport>("test_connection"),
     setVisible: callable<[visible: boolean], void>("set_visible"),
+    setRouteVisible: callable<[visible: boolean], void>("set_route_visible"),
     setGameRunning: callable<[running: boolean], void>("set_game_running"),
     refresh: callable<[], void>("refresh"),
     checkUpdate: callable<[force: boolean], UpdateInfo | null>("check_update"),

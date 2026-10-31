@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from . import states
@@ -11,6 +12,8 @@ QUEUE_TOP = 8
 RECENT = 5
 HISTORY_LIMIT = 10
 KIB = 1024
+STAGE_ACTIONS = 6
+TAG_RE = re.compile(r"<[^>]+>")
 
 
 class SabState:
@@ -47,7 +50,31 @@ def project_queue_slot(slot: dict[str, Any]) -> dict[str, Any]:
         "priority_label": states.PRIORITY_NAMES.get(priority, str(slot.get("priority") or "")) if priority is not None else str(slot.get("priority") or ""),
         "category": "" if slot.get("cat") in (None, "*") else str(slot.get("cat")),
         "paused": slot.get("status") == "Paused",
+        "index": int(num(slot.get("index"), -1)),
     }
+
+
+def _stage_log(raw: Any) -> list[dict[str, Any]]:
+    """Post-processing steps, such as Repair and Unpack. Some lines carry HTML
+    from SABnzbd's own interface, so tags are stripped."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for stage in raw:
+        if not isinstance(stage, dict):
+            continue
+        actions = stage.get("actions") if isinstance(stage.get("actions"), list) else []
+        lines = [TAG_RE.sub(" ", str(a)).strip()[:200] for a in actions[:STAGE_ACTIONS]]
+        out.append({"name": str(stage.get("name") or ""), "actions": [line for line in lines if line]})
+    return out
+
+
+def _disk(raw: Any) -> float | None:
+    """Free space in GB, sent as text such as "123.45". Missing means unknown."""
+    if raw is None or raw == "":
+        return None
+    value = num(raw, -1)
+    return value if value >= 0 else None
 
 
 def project_history_slot(slot: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +87,8 @@ def project_history_slot(slot: dict[str, Any]) -> dict[str, Any]:
         "size": str(slot.get("size") or ""),
         "completed": int(num(slot.get("completed"))) or None,
         "action_line": str(slot.get("action_line") or ""),
+        "category": "" if slot.get("category") in (None, "*") else str(slot.get("category")),
+        "stage_log": _stage_log(slot.get("stage_log")),
     }
 
 
@@ -81,6 +110,10 @@ def project(state: SabState) -> dict[str, Any]:
             "speedlimit": int(num(q.get("speedlimit"), 100)) or 100,
             "warnings": int(num(q.get("have_warnings"))),
             "pause_left": pause_seconds(q.get("pause_int")),
+            # Free space in GB for the incomplete and complete folders.
+            "disk_incomplete": _disk(q.get("diskspace1")),
+            "disk_complete": _disk(q.get("diskspace2")),
+            "quota_left": str(q.get("left_quota") or "") if states.truthy(q.get("have_quota")) else None,
         },
         "queue": [project_queue_slot(s) for s in slots[:QUEUE_TOP]],
         "post_processing": post,

@@ -8,7 +8,7 @@ from plugin_core.errors import AUTH, FORBIDDEN, PluginError
 from plugin_core.http import parse_base_url
 from sabmon import states
 from sabmon.client import HINT_CONFIG_LOCKED, HINT_KEY_INCORRECT, SabClient
-from sabmon.service import SabService
+from sabmon.service import SabService, parse_version
 from sabmon.sync import SabState, TransitionTracker, project
 
 mock_sabnzbd = pytest.importorskip("mock_sabnzbd")
@@ -317,3 +317,245 @@ def test_connection_test_warns_on_local_8080(tmp_path):
     service.save_settings({"base_url": "http://127.0.0.1:8080"})
     report = _run(service.test_connection())
     assert any("8090" in w for w in report["warnings"])
+
+
+# Disk, quota, queue order, categories, warnings, history page and stats
+
+
+def test_projection_disk_quota_index_and_stage_log(mock, tmp_path):
+    server = mock()
+    server.state.finish_first(failed=True)
+    service = configured(server, tmp_path)
+    _run(service.poller.poll_once())
+    data = service.last_data
+    assert data["server"]["disk_incomplete"] == 120.5 and data["server"]["disk_complete"] == 1450.25
+    assert data["server"]["quota_left"] is None
+    assert data["queue"][0]["index"] == 0
+    failed = data["recent"][0]
+    assert failed["status"] == "Failed"
+    # HTML from SABnzbd is stripped.
+    assert failed["stage_log"] == [{"name": "Repair", "actions": ["Repair failed, not enough repair blocks  (need 12)"]}]
+
+
+def test_quota_shows_only_when_set():
+    state = SabState()
+    state.apply({"have_quota": "True", "left_quota": "50 G", "diskspace1": ""}, None)
+    out = project(state)["server"]
+    assert out["quota_left"] == "50 G" and out["disk_incomplete"] is None
+    state.apply({"have_quota": "False", "left_quota": "50 G"}, None)
+    assert project(state)["server"]["quota_left"] is None
+
+
+def test_move_job_top_and_bottom(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    _run(service.poller.poll_once())
+    first, second = (s["nzo_id"] for s in server.state.queue)
+    assert _run(service.move_job(second, "top")) == {"ok": True}
+    assert [s["nzo_id"] for s in server.state.queue] == [second, first]
+    assert server.state.calls[-1]["value2"] == "0"
+    _run(service.poller.poll_once())
+    assert _run(service.move_job(second, "bottom")) == {"ok": True}
+    assert server.state.calls[-1]["value2"] == "1"
+    assert [s["nzo_id"] for s in server.state.queue] == [first, second]
+    assert _run(service.move_job(second, "sideways"))["ok"] is False
+
+
+def test_move_job_refuses_before_the_queue_loads_and_reports_no_move(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    job = server.state.queue[0]["nzo_id"]
+    # No poll yet, so the job count is unknown.
+    result = _run(service.move_job(job, "bottom"))
+    assert result["ok"] is False and "queue to load" in result["error"]["message"]
+    _run(service.poller.poll_once())
+    server.state.queue.pop()
+    # The panel still thinks there are two jobs. SABnzbd answers position -1.
+    result = _run(service.move_job(job, "bottom"))
+    assert result["ok"] is False and "did not move" in result["error"]["message"]
+
+
+def test_categories_are_cached_and_checked(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    job = server.state.queue[0]["nzo_id"]
+    assert _run(service.get_categories()) == {"ok": True, "categories": ["*", "movies", "software"]}
+    server.state.categories.append("games")
+    assert "games" in _run(service.get_categories())["categories"], "each opening fetches again"
+    assert _run(service.change_category(job, "software")) == {"ok": True}
+    assert server.state.queue[0]["cat"] == "software"
+    assert _run(service.change_category(job, "*")) == {"ok": True}
+    assert _run(service.change_category(job, "nonsense"))["ok"] is False
+
+
+def test_clear_warnings(mock, tmp_path):
+    server = mock()
+    server.state.have_warnings = "1"
+    service = configured(server, tmp_path)
+    assert _run(service.clear_warnings()) == {"ok": True}
+    assert server.state.have_warnings == "0"
+
+
+def test_history_page_retry_and_delete(mock, tmp_path):
+    server = mock()
+    server.state.finish_first(failed=True)
+    service = configured(server, tmp_path)
+    page = _run(service.get_history())
+    assert page["ok"] and page["total"] == 2 and page["limit"] == 50
+    failed = _run(service.get_history(failed_only=True))
+    assert [j["status"] for j in failed["jobs"]] == ["Failed"]
+    assert server.state.calls[-1]["failed_only"] == "1"
+
+    job = failed["jobs"][0]["id"]
+    assert _run(service.retry_job(job)) == {"ok": True}
+    assert [h["status"] for h in server.state.history] == ["Completed"]
+    assert server.state.queue[-1]["filename"] == "Example.Linux.ISO"
+
+    done = server.state.history[0]["nzo_id"]
+    assert _run(service.delete_history(done, False)) == {"ok": True}
+    assert server.state.history == [] and "del_files" not in server.state.calls[-1]
+    assert _run(service.delete_history("", False))["ok"] is False
+
+
+def test_retry_all_and_clear_failed(mock, tmp_path):
+    server = mock()
+    server.state.finish_first(failed=True)
+    server.state.finish_first(failed=True)
+    service = configured(server, tmp_path)
+    assert _run(service.retry_all()) == {"ok": True}
+    assert server.state.history[0]["status"] == "Completed" and len(server.state.history) == 1
+
+    server.state.finish_first(failed=True)
+    assert _run(service.delete_history("failed", True)) == {"ok": True}
+    assert server.state.calls[-1]["value"] == "failed" and server.state.calls[-1]["del_files"] == "1"
+    assert all(h["status"] != "Failed" for h in server.state.history)
+
+
+def test_server_stats(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    stats = _run(service.get_server_stats())
+    assert stats["ok"] and stats["totals"] == {"day": 2e9, "week": 9e9, "month": 4e10, "total": 9e11}
+    assert [s["name"] for s in stats["servers"]] == ["news.example.com", "backup.example.net"]
+    assert stats["servers"][1]["day"] == 0
+
+
+@pytest.mark.parametrize(
+    "text,version",
+    [("5.1.3", (5, 1, 3)), ("5.2.0Beta1", (5, 2, 0)), ("4.5.5", (4, 5, 5)), ("develop", ())],
+)
+def test_parse_version(text, version):
+    assert parse_version(text) == version
+
+
+def test_connection_test_warns_on_old_server(mock, tmp_path):
+    server = mock(version="5.1.0")
+    service = configured(server, tmp_path)
+    report = _run(service.test_connection())
+    assert report["ok"] and any("5.1.3" in w for w in report["warnings"])
+    current = mock(version="5.1.3")
+    service.save_settings({"base_url": current.url})
+    report = _run(service.test_connection())
+    assert not any("5.1.3" in w for w in report["warnings"])
+
+
+def test_unknown_game_action_is_rejected(tmp_path):
+    service = make_service(tmp_path)
+    with pytest.raises(ValueError):
+        service.save_settings({"game_action": "explode"})
+    assert service.settings.get("game_action") == "off"
+
+
+# Game-time pause or speed limit
+
+
+def _game(service, running):
+    async def scenario():
+        service.set_game_running(running)
+        if service._game_task:
+            await service._game_task
+
+    _run(scenario())
+
+
+def test_game_action_off_by_default(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    _game(service, True)
+    assert server.state.paused is False and server.state.speedlimit == "100"
+
+
+def test_game_pause_and_resume(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    service.save_settings({"game_action": "pause"})
+    _game(service, True)
+    assert server.state.paused is True
+    _game(service, False)
+    assert server.state.paused is False and service.game_memory.get() is None
+
+
+def test_game_pause_leaves_user_pauses_alone(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    service.save_settings({"game_action": "pause"})
+    server.state.paused = True
+    _game(service, True)
+    _game(service, False)
+    assert server.state.paused is True
+
+    # A timed pause set during the game stays.
+    server.state.paused = False
+    _game(service, True)
+    server.state.pause_int = "25:00"
+    _game(service, False)
+    assert server.state.paused is True and service.game_memory.get() is None
+
+
+def test_game_speed_limit_and_restore(mock, tmp_path):
+    server = mock()
+    server.state.speedlimit = "75"
+    service = configured(server, tmp_path)
+    service.save_settings({"game_action": "limit_25"})
+    _game(service, True)
+    assert server.state.speedlimit == "25"
+    record = service.game_memory.get()
+    assert record["limit"] == 25 and record["previous"] == 75 and record["server"]
+    _game(service, False)
+    assert server.state.speedlimit == "75"
+
+    # Already slower than the game limit: nothing changes.
+    server.state.speedlimit = "10"
+    _game(service, True)
+    assert server.state.speedlimit == "10" and service.game_memory.get() is None
+
+    # The user picks another limit during the game. It stays.
+    server.state.speedlimit = "100"
+    _game(service, True)
+    server.state.speedlimit = "50"
+    _game(service, False)
+    assert server.state.speedlimit == "50"
+
+
+def test_game_undo_waits_until_the_panel_reports(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    service.save_settings({"game_action": "pause"})
+    _game(service, True)
+    fresh = make_service(tmp_path)
+    _run(fresh.poller.poll_once())
+    assert server.state.paused is True, "a game may still be running"
+    _game(fresh, False)
+    assert server.state.paused is False
+
+
+def test_game_limit_restore_gives_up_when_config_locked(mock, tmp_path):
+    server = mock()
+    service = configured(server, tmp_path)
+    service.save_settings({"game_action": "limit_50"})
+    _game(service, True)
+    assert server.state.speedlimit == "50"
+    server.state.config_locked = True
+    _game(service, False)
+    # A lock will not clear by itself, so the plugin stops trying.
+    assert service.game_memory.get() is None

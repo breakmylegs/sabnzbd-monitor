@@ -69,6 +69,9 @@ class Plugin:
     async def set_visible(self, visible):
         self.service.set_visible(visible)
 
+    async def set_route_visible(self, visible):
+        self.service.set_route_visible(visible)
+
     async def set_game_running(self, running):
         self.service.set_game_running(running)
 
@@ -107,3 +110,30 @@ class Plugin:
 
     async def get_warnings(self):
         return await self._guard(self.service.get_warnings())
+
+    async def clear_warnings(self):
+        return await self._guard(self.service.clear_warnings())
+
+    async def move_job(self, nzo_id, where):
+        return await self._guard(self.service.move_job(nzo_id, where))
+
+    async def get_categories(self):
+        return await self._guard(self.service.get_categories())
+
+    async def change_category(self, nzo_id, category):
+        return await self._guard(self.service.change_category(nzo_id, category))
+
+    async def get_history(self, failed_only=False):
+        return await self._guard(self.service.get_history(failed_only))
+
+    async def retry_job(self, nzo_id):
+        return await self._guard(self.service.retry_job(nzo_id))
+
+    async def retry_all(self):
+        return await self._guard(self.service.retry_all())
+
+    async def delete_history(self, nzo_id, delete_files=False):
+        return await self._guard(self.service.delete_history(nzo_id, delete_files))
+
+    async def get_server_stats(self):
+        return await self._guard(self.service.get_server_stats())

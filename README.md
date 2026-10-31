@@ -5,9 +5,13 @@ A Decky Loader plugin. Watch and control a SABnzbd server from the Quick Access 
 - Speed, time left and size left, with pause and resume.
 - Timed pause for 15, 30 or 60 minutes, and a speed limit of 25, 50, 75 or 100 percent.
 - Jobs in post-processing, with the current step.
-- The first 8 jobs in the queue with progress, time left, status and priority. Pause, resume, change priority or delete each one.
-- The last 5 completed or failed jobs.
-- A warnings badge when SABnzbd has warnings.
+- The first 8 jobs in the queue with progress, time left, status and priority. Pause, resume, move to the top or bottom, change priority or category, or delete each one.
+- The last 5 completed or failed jobs. Retry a failed job, see which step failed, or remove a job from the history.
+- A full-screen history of the last 50 jobs, with Retry all failed jobs and Remove all failed jobs.
+- Free disk space for the download and complete folders, quota left, and download totals per day, week, month and server.
+- A warnings badge when SABnzbd has warnings. Read and clear them.
+- Optional: pause downloads, or limit them to 25 or 50 percent, while a game runs. They go back when it ends. Off by default.
+- The connection test warns when the server is older than SABnzbd 5.1.3, which fixed ways to skip the login.
 - A toast when a job completes or fails, with the reason. Optional during games.
 
 Issues and source: [breakmylegs/decky-plugins](https://github.com/breakmylegs/decky-plugins). This repo is a mirror for releases.

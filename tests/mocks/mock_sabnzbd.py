@@ -13,6 +13,9 @@ Models what the plugin relies on:
 - Numbers as strings, as SABnzbd sends them.
 - history with last_history_update returns false when nothing changed.
 - nzo_id values are opaque. 5.0.1 and later use GUIDs.
+- switch takes a numeric position in value2, 0 for the top, as in nzbqueue.py.
+- retry, retry_all, history delete (ids or "failed"), failed_only, get_cats,
+  change_cat ("*" is the default), warnings clear and server_stats (bytes).
 """
 
 from __future__ import annotations
@@ -53,6 +56,7 @@ class MockState:
              "fail_message": "", "size": "3.1 GB", "completed": 1_760_000_000, "loaded": False, "action_line": ""},
         ]
         self.last_history_update = 1
+        self.categories = ["*", "movies", "software"]
         self.calls: list[dict[str, str]] = []
         self.lock = threading.Lock()
 
@@ -62,10 +66,12 @@ class MockState:
     def finish_first(self, failed: bool = False) -> None:
         with self.lock:
             slot = self.queue.pop(0)
+            stage_log = [{"name": "Repair", "actions": ["Repair failed, not enough repair blocks <br/>(need 12)"]}]
             self.history.insert(0, {
                 "nzo_id": slot["nzo_id"], "name": slot["filename"], "status": "Failed" if failed else "Completed",
                 "fail_message": "Repair failed, not enough repair blocks" if failed else "", "size": "2.0 GB",
-                "completed": 1_760_000_100, "loaded": False, "action_line": ""})
+                "completed": 1_760_000_100, "loaded": False, "action_line": "", "category": slot["cat"],
+                "stage_log": stage_log if failed else []})
             self.touch_history()
 
     def start_post_processing(self, stage: str = "Extracting") -> None:
@@ -135,6 +141,8 @@ def make_handler(state: MockState):
                     "paused": state.paused, "speed": "0 " if state.paused else "5.2 M", "kbpersec": "0.00" if state.paused else "5324.80",
                     "timeleft": "0:12:00", "mbleft": "3200.00", "sizeleft": "3.1 GB", "noofslots_total": len(state.queue),
                     "speedlimit": state.speedlimit, "have_warnings": state.have_warnings, "pause_int": state.pause_int,
+                    "diskspace1": "120.50", "diskspace2": "1450.25", "diskspacetotal1": "500.00",
+                    "diskspacetotal2": "4000.00", "have_quota": False, "quota": "0 ", "left_quota": "0 ",
                     "slots": [dict(s, index=i) for i, s in enumerate(slots, start)]}})
             if mode == "queue" and name in ("pause", "resume"):
                 for slot in state.queue:
@@ -150,13 +158,62 @@ def make_handler(state: MockState):
                     if slot["nzo_id"] == q.get("value"):
                         slot["priority"] = {"-1": "Low", "0": "Normal", "1": "High", "2": "Force"}.get(q.get("value2", ""), "Normal")
                 return self._json({"position": 0})
+            if mode == "history" and name == "delete":
+                value = q.get("value", "")
+                if value.lower() == "failed":
+                    state.history = [h for h in state.history if h["status"] != "Failed"]
+                else:
+                    ids = value.split(",")
+                    state.history = [h for h in state.history if h["nzo_id"] not in ids]
+                state.touch_history()
+                return self._json({"status": True})
             if mode == "history":
                 since = q.get("last_history_update")
                 if since is not None and int(since) == state.last_history_update:
                     return self._json({"history": False})
                 limit = int(q.get("limit", 0) or 1000)
-                return self._json({"history": {"slots": state.history[:limit], "noofslots": len(state.history),
+                items = [h for h in state.history if h["status"] == "Failed"] if q.get("failed_only") == "1" else state.history
+                return self._json({"history": {"slots": items[:limit], "noofslots": len(items),
                                                "last_history_update": state.last_history_update}})
+            if mode in ("retry", "retry_all"):
+                targets = [h for h in state.history if h["status"] == "Failed"
+                           and (mode == "retry_all" or h["nzo_id"] == q.get("value"))]
+                if mode == "retry" and not targets:
+                    return self._error("item does not exist")
+                for h in targets:
+                    state.history.remove(h)
+                    state.queue.append(_slot(h["name"], "Queued", 0))
+                state.touch_history()
+                if mode == "retry":
+                    return self._json({"status": True, "nzo_id": state.queue[-1]["nzo_id"]})
+                return self._json({"status": [s["nzo_id"] for s in state.queue[-len(targets):]] if targets else []})
+            if mode == "switch":
+                ids = [s["nzo_id"] for s in state.queue]
+                if q.get("value") not in ids:
+                    return self._json({"result": {"position": -1, "priority": 0}})
+                position = int(q.get("value2", "0"))
+                if not 0 <= position < len(state.queue):
+                    # SABnzbd treats an index past the end as an unknown job id and moves nothing.
+                    return self._json({"result": {"position": -1, "priority": 0}})
+                slot = state.queue.pop(ids.index(q["value"]))
+                state.queue.insert(position, slot)
+                return self._json({"result": {"position": position, "priority": 0}})
+            if mode == "get_cats":
+                return self._json({"categories": list(state.categories)})
+            if mode == "change_cat":
+                for slot in state.queue:
+                    if slot["nzo_id"] == q.get("value"):
+                        slot["cat"] = q.get("value2", "*")
+                return self._json({"status": True})
+            if mode == "server_stats":
+                return self._json({"day": 2_000_000_000, "week": 9_000_000_000, "month": 40_000_000_000,
+                                   "total": 900_000_000_000,
+                                   "servers": {"news.example.com": {"day": 2_000_000_000, "week": 9_000_000_000,
+                                                                    "month": 40_000_000_000, "total": 800_000_000_000,
+                                                                    "daily": {}, "articles_tried": {},
+                                                                    "articles_success": {}},
+                                               "backup.example.net": {"day": 0, "week": 0, "month": 0,
+                                                                      "total": 100_000_000_000}}})
             if mode == "pause":
                 state.paused = True
                 return self._json({"status": True})
@@ -175,6 +232,9 @@ def make_handler(state: MockState):
                     state.speedlimit = q.get("value", "100")
                     return self._json({"status": True})
                 return self._error("not implemented")
+            if mode == "warnings" and name == "clear":
+                state.have_warnings = "0"
+                return self._json({"status": True})
             if mode == "warnings":
                 return self._json({"warnings": [] if state.have_warnings == "0" else [
                     {"text": "Example warning", "type": "WARNING", "time": 1_760_000_000}]})

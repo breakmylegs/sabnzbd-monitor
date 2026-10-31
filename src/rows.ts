@@ -1,6 +1,6 @@
 // Pure formatting for the SABnzbd panel. Tested with vitest.
-import { formatDuration, formatSpeed, truncate } from "./shared/format";
-import type { HistoryJob, QueueJob, SabData } from "./types";
+import { formatBytes, formatDuration, formatSpeed, truncate } from "./shared/format";
+import type { GameAction, HistoryJob, QueueJob, SabData, StatsSums } from "./types";
 
 export const TIMED_PAUSES = [15, 30, 60];
 export const SPEED_LIMITS = [25, 50, 75, 100];
@@ -45,3 +45,38 @@ export function speedLimitOption(limit: number): number {
   // Show the nearest preset so the dropdown always has a selection.
   return SPEED_LIMITS.reduce((best, p) => (Math.abs(p - limit) < Math.abs(best - limit) ? p : best), 100);
 }
+
+// SABnzbd reports free space in GB as text. Round down, so free space is never overstated.
+export function formatGb(gb: number): string {
+  return gb >= 1000 ? `${(Math.floor(gb / 10) / 100).toFixed(2)} TB` : `${Math.floor(gb)} GB`;
+}
+
+export function diskSummary(server: SabData["server"]): string | null {
+  const parts: string[] = [];
+  if (server.disk_incomplete !== null) parts.push(`${formatGb(server.disk_incomplete)} free for downloads`);
+  if (server.disk_complete !== null && server.disk_complete !== server.disk_incomplete) {
+    parts.push(`${formatGb(server.disk_complete)} for completed`);
+  }
+  if (server.quota_left) parts.push(`quota left ${server.quota_left.trim()}`);
+  return parts.length ? parts.join(", ") : null;
+}
+
+// What failed, step by step, from the history stage log.
+export function stageLines(job: HistoryJob): string[] {
+  return job.stage_log.flatMap((stage) => stage.actions.map((a) => `${stage.name}: ${a}`));
+}
+
+export function categoryLabel(category: string): string {
+  return category === "*" ? "Default" : category;
+}
+
+export function statsLine(label: string, sums: StatsSums): string {
+  return `${label}: today ${formatBytes(sums.day)}, this week ${formatBytes(sums.week)}, this month ${formatBytes(sums.month)}, total ${formatBytes(sums.total)}`;
+}
+
+export const GAME_ACTION_OPTIONS: { data: GameAction; label: string }[] = [
+  { data: "off", label: "Do nothing" },
+  { data: "pause", label: "Pause downloads" },
+  { data: "limit_25", label: "Limit speed to 25%" },
+  { data: "limit_50", label: "Limit speed to 50%" },
+];
